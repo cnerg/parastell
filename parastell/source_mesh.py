@@ -84,14 +84,12 @@ class SourceMesh(object):
             'vmec2xyz(s, theta, phi)' that returns an (x,y,z) coordinate for
             any closed flux surface label, s, poloidal angle, theta, and
             toroidal angle, phi.
-        mesh_size (tuple of int): number of grid points along each axis of
-            flux-coordinate space, in the order (num_s, num_theta, num_phi).
-            'num_s' is the number of closed flux surfaces for vertex locations
-            in each toroidal plane. 'num_theta' is the number of poloidal
-            angles for vertex locations in each toroidal plane. 'num_phi' is
-            the number of toroidal angles for planes of vertices.
-        toroidal_extent (float): extent of source mesh in toroidal direction
-            [deg].
+        cfs_grid (iterable of float): mesh grid points along closed flux
+            surface (CFS) dimension of flux space.
+        poloidal_grid (iterable of float): mesh grid points along poloidal
+            angle dimension of flux space [deg].
+        toroidal_grid (iterable of float): mesh grid points along toroidal
+            angle dimension of flux space [deg].
         logger (object): logger object (optional, defaults to None). If no
             logger is supplied, a default logger will be instantiated.
 
@@ -107,15 +105,20 @@ class SourceMesh(object):
     """
 
     def __init__(
-        self, vmec_obj, mesh_size, toroidal_extent, logger=None, **kwargs
+        self,
+        vmec_obj,
+        cfs_grid,
+        poloidal_grid,
+        toroidal_grid,
+        logger=None,
+        **kwargs
     ):
 
         self.logger = logger
         self.vmec_obj = vmec_obj
-        self.num_s = mesh_size[0]
-        self.num_theta = mesh_size[1]
-        self.num_phi = mesh_size[2]
-        self.toroidal_extent = toroidal_extent
+        self.cfs_grid = cfs_grid
+        self.poloidal_grid = poloidal_grid
+        self.toroidal_grid = toroidal_grid
 
         self.scale = m2cm
         self.plasma_conditions = default_plasma_conditions
@@ -134,14 +137,44 @@ class SourceMesh(object):
         self._create_mbc()
 
     @property
-    def toroidal_extent(self):
-        return self._toroidal_extent
+    def cfs_grid(self):
+        return self._cfs_grid
 
-    @toroidal_extent.setter
-    def toroidal_extent(self, angle):
-        self._toroidal_extent = np.deg2rad(angle)
-        if self._toroidal_extent > 360.0:
-            e = ValueError("Toroidal extent cannot exceed 360.0 degrees.")
+    @cfs_grid.setter
+    def cfs_grid(self, array):
+        self._cfs_grid = array
+        if self._cfs_grid[0] != 0 or self._cfs_grid[-1] != 1:
+            e = ValueError("CFS grid values must span the range [0, 1].")
+            self._logger.error(e.args[0])
+            raise e
+
+    @property
+    def poloidal_grid(self):
+        return self._poloidal_grid
+
+    @poloidal_grid.setter
+    def poloidal_grid(self, array):
+        self._poloidal_grid = np.deg2rad(array)
+        if self._poloidal_grid[-1] - self._poloidal_grid[0] != 360.0:
+            e = ValueError(
+                "Poloidal extent spanned by poloidal_grid must be exactly 360 "
+                "degrees."
+            )
+            self._logger.error(e.args[0])
+            raise e
+
+    @property
+    def toroidal_grid(self):
+        return self._toroidal_grid
+
+    @toroidal_grid.setter
+    def toroidal_grid(self, array):
+        self._toroidal_grid = np.deg2rad(array)
+        if self._toroidal_grid[-1] - self._toroidal_grid[0] > 360.0:
+            e = ValueError(
+                "Toroidal extent spanned by toroidal_grid cannot exceed 360 "
+                "degrees."
+            )
             self._logger.error(e.args[0])
             raise e
 
