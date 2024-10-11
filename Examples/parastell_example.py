@@ -70,10 +70,11 @@ stellarator.export_magnets(
 )
 
 # Define source mesh parameters
-mesh_size = (11, 81, 61)
-toroidal_extent = 90.0
+cfs_grid = np.linspace(0.0, 1.0, num=11)
+poloidal_grid = np.linspace(0.0, 360.0, num=81)
+toroidal_grid = np.linspace(0.0, 90.0, num=61)
 # Construct source
-stellarator.construct_source_mesh(mesh_size, toroidal_extent)
+stellarator.construct_source_mesh(cfs_grid, poloidal_grid, toroidal_grid)
 # Export source file
 stellarator.export_source_mesh(filename="source_mesh", export_dir=export_dir)
 

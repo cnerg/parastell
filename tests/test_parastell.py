@@ -83,7 +83,7 @@ def test_parastell(stellarator):
     coils_file = Path("files_for_tests") / "coils.example"
     width = 40.0
     thickness = 50.0
-    toroidal_extent = 90.0
+    toroidal_extent = 15.0
     sample_mod = 6
 
     stellarator.construct_magnets(
@@ -103,10 +103,11 @@ def test_parastell(stellarator):
     assert Path(step_filename_exp).with_suffix(".step").exists()
     assert Path(mesh_filename_exp).with_suffix(".h5m").exists()
 
-    mesh_size = (4, 8, 4)
-    toroidal_extent = 15.0
+    cfs_grid = np.linspace(0.0, 1.0, num=6)
+    poloidal_grid = np.linspace(0.0, 360.0, num=41)
+    toroidal_grid = np.linspace(0.0, 15.0, num=9)
 
-    stellarator.construct_source_mesh(mesh_size, toroidal_extent)
+    stellarator.construct_source_mesh(cfs_grid, poloidal_grid, toroidal_grid)
 
     filename_exp = "source_mesh"
 

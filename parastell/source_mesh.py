@@ -142,11 +142,12 @@ class SourceMesh(object):
 
     @cfs_grid.setter
     def cfs_grid(self, array):
-        self._cfs_grid = array
-        if self._cfs_grid[0] != 0 or self._cfs_grid[-1] != 1:
+        if array[0] != 0 or array[-1] != 1:
             e = ValueError("CFS grid values must span the range [0, 1].")
             self._logger.error(e.args[0])
             raise e
+        # Don't include magnetic axis in list of s values
+        self._cfs_grid = array[1:]
 
     @property
     def poloidal_grid(self):
@@ -154,14 +155,15 @@ class SourceMesh(object):
 
     @poloidal_grid.setter
     def poloidal_grid(self, array):
-        self._poloidal_grid = np.deg2rad(array)
-        if self._poloidal_grid[-1] - self._poloidal_grid[0] != 360.0:
+        if array[-1] - array[0] != 360.0:
             e = ValueError(
                 "Poloidal extent spanned by poloidal_grid must be exactly 360 "
                 "degrees."
             )
             self._logger.error(e.args[0])
             raise e
+        # Exclude repeated entry at end of closed loop
+        self._poloidal_grid = np.deg2rad(array[:-1])
 
     @property
     def toroidal_grid(self):
@@ -169,14 +171,18 @@ class SourceMesh(object):
 
     @toroidal_grid.setter
     def toroidal_grid(self, array):
-        self._toroidal_grid = np.deg2rad(array)
-        if self._toroidal_grid[-1] - self._toroidal_grid[0] > 360.0:
+        if array[-1] - array[0] > 360.0:
             e = ValueError(
                 "Toroidal extent spanned by toroidal_grid cannot exceed 360 "
                 "degrees."
             )
             self._logger.error(e.args[0])
             raise e
+        # Exclude repeated entry at end if closed loop
+        if array[-1] - array[0] == 2 * np.pi:
+            self._toroidal_grid = np.deg2rad(array[:-1])
+        else:
+            self._toroidal_grid = np.deg2rad(array)
 
     @property
     def logger(self):
@@ -225,28 +231,20 @@ class SourceMesh(object):
         """
         self._logger.info("Computing source mesh point cloud...")
 
-        phi_list = np.linspace(0, self._toroidal_extent, num=self.num_phi)
-        # don't include magnetic axis in list of s values
-        s_list = np.linspace(0.0, 1.0, num=self.num_s)[1:]
-        # don't include repeated entry at 0 == 2*pi
-        theta_list = np.linspace(0, 2 * np.pi, num=self.num_theta)[:-1]
+        self.verts_per_ring = self._poloidal_grid.shape[0]
+        # add one vertex per plane for magnetic axis
+        self.verts_per_plane = (
+            self._cfs_grid.shape[0] * self.verts_per_ring + 1
+        )
+        num_verts = self._toroidal_grid.shape[0] * self.verts_per_plane
 
-        # don't include repeated entry at 0 == 2*pi
-        if self._toroidal_extent == 2 * np.pi:
-            phi_list = phi_list[:-1]
-
-        self.verts_per_ring = theta_list.shape[0]
-        # add one vertex per plane for magenetic axis
-        self.verts_per_plane = s_list.shape[0] * self.verts_per_ring + 1
-
-        num_verts = phi_list.shape[0] * self.verts_per_plane
         self.coords = np.zeros((num_verts, 3))
         self.coords_s = np.zeros(num_verts)
 
         # Initialize vertex index
         vert_idx = 0
 
-        for phi in phi_list:
+        for phi in self._toroidal_grid:
             # vertex coordinates on magnetic axis
             self.coords[vert_idx, :] = (
                 np.array(self.vmec_obj.vmec2xyz(0, 0, phi)) * self.scale
@@ -256,8 +254,8 @@ class SourceMesh(object):
             vert_idx += 1
 
             # vertex coordinate away from magnetic axis
-            for s in s_list:
-                for theta in theta_list:
+            for s in self._cfs_grid:
+                for theta in self._poloidal_grid:
                     self.coords[vert_idx, :] = (
                         np.array(self.vmec_obj.vmec2xyz(s, theta, phi))
                         * self.scale
@@ -354,7 +352,10 @@ class SourceMesh(object):
         ma_offset = phi_idx * self.verts_per_plane
 
         # Wrap around if final plane and it is 2*pi
-        if self._toroidal_extent == 2 * np.pi and phi_idx == self.num_phi - 1:
+        if (
+            self._toroidal_grid[-1] == 2 * np.pi
+            and phi_idx == len(self._toroidal_grid) - 1
+        ):
             ma_offset = 0
 
         # Compute index offset from closed flux surface
@@ -363,7 +364,7 @@ class SourceMesh(object):
         theta_offset = theta_idx
 
         # Wrap around if theta is 2*pi
-        if theta_idx == self.num_theta:
+        if theta_idx == len(self._poloidal_grid) + 1:
             theta_offset = 1
 
         id = ma_offset + s_offset + theta_offset
@@ -490,17 +491,17 @@ class SourceMesh(object):
         self.mesh_set = self.mbc.create_meshset()
         self.mbc.add_entity(self.mesh_set, self.verts)
 
-        for phi_idx in range(self.num_phi - 1):
+        for phi_idx, _ in enumerate(self._toroidal_grid[:-1]):
             # Set alternation flag to true at beginning of each toroidal block
             self.alt_flag = True
             # Create tetrahedra for wedges at center of plasma
-            for theta_idx in range(1, self.num_theta):
+            for theta_idx, _ in enumerate(self._poloidal_grid, 1):
                 self._create_tets_from_wedge(theta_idx, phi_idx)
                 self.alt_flag = not self.alt_flag
 
             # Create tetrahedra for hexahedra beyond center of plasma
-            for s_idx in range(self.num_s - 2):
-                for theta_idx in range(1, self.num_theta):
+            for s_idx, _ in enumerate(self._cfs_grid[:-1]):
+                for theta_idx, _ in enumerate(self._poloidal_grid, 1):
                     self._create_tets_from_hex(s_idx, theta_idx, phi_idx)
                     self.alt_flag = not self.alt_flag
 
@@ -568,11 +569,19 @@ def generate_source_mesh():
 
     source_mesh_dict = all_data["source_mesh"]
 
+    mesh_size = source_mesh_dict["mesh_size"]
+    toroidal_extent = source_mesh_dict["toroidal_extent"]
+    cfs_grid = np.linspace(0.0, 1.0, mesh_size[0])
+    poloidal_grid = np.linspace(0.0, 360.0, num=mesh_size[1])
+    toroidal_grid = np.linspace(0.0, toroidal_extent, num=mesh_size[2])
+
     source_mesh = SourceMesh(
         vmec_obj,
-        source_mesh_dict["mesh_size"],
-        source_mesh_dict["toroidal_extent"],
-        logger=logger**source_mesh_dict,
+        cfs_grid,
+        poloidal_grid,
+        toroidal_grid,
+        logger=logger,
+        **source_mesh_dict,
     )
 
     source_mesh.create_vertices()
@@ -580,7 +589,7 @@ def generate_source_mesh():
 
     source_mesh.export_mesh(
         export_dir=args.export_dir,
-        **(filter_kwargs(source_mesh_dict, ["filename"]))
+        **(filter_kwargs(source_mesh_dict, ["filename"])),
     )
 
 

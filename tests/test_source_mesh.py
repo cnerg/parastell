@@ -22,30 +22,31 @@ def source_mesh():
 
     vmec_obj = read_vmec.VMECData(vmec_file)
 
-    # Set mesh size to minimum that maintains element aspect ratios that do not
+    # Set mesh grids to minimum that maintains element aspect ratios that do not
     # result in negative volumes
-    mesh_size = (6, 41, 51)
-    toroidal_extent = 90.0
+    cfs_grid = np.linspace(0.0, 1.0, num=6)
+    poloidal_grid = np.linspace(0.0, 360.0, num=41)
+    toroidal_grid = np.linspace(0.0, 15.0, num=9)
 
-    source_mesh_obj = sm.SourceMesh(vmec_obj, mesh_size, toroidal_extent)
+    source_mesh_obj = sm.SourceMesh(
+        vmec_obj, cfs_grid, poloidal_grid, toroidal_grid
+    )
 
     return source_mesh_obj
 
 
 def test_mesh_basics(source_mesh):
 
-    num_s_exp = 6
-    num_theta_exp = 41
-    num_phi_exp = 51
-    tor_ext_exp = 90.0
+    cfs_grid_exp = np.linspace(0.0, 1.0, num=6)[1:]
+    poloidal_grid_exp = np.linspace(0.0, 2 * np.pi, num=41)[:-1]
+    toroidal_grid_exp = np.linspace(0.0, np.deg2rad(15.0), num=9)
     scale_exp = 100
 
     remove_files()
 
-    assert source_mesh.num_s == num_s_exp
-    assert source_mesh.num_theta == num_theta_exp
-    assert source_mesh.num_phi == num_phi_exp
-    assert source_mesh.toroidal_extent == np.deg2rad(tor_ext_exp)
+    assert np.allclose(source_mesh.cfs_grid, cfs_grid_exp)
+    assert np.allclose(source_mesh.poloidal_grid, poloidal_grid_exp)
+    assert np.allclose(source_mesh.toroidal_grid, toroidal_grid_exp)
     assert source_mesh.scale == scale_exp
 
     remove_files()
@@ -55,7 +56,7 @@ def test_vertices(source_mesh):
 
     num_s = 6
     num_theta = 41
-    num_phi = 51
+    num_phi = 9
 
     num_verts_exp = num_phi * ((num_s - 1) * (num_theta - 1) + 1)
 
@@ -74,7 +75,7 @@ def test_mesh_generation(source_mesh):
 
     num_s = 6
     num_theta = 41
-    num_phi = 51
+    num_phi = 9
 
     tets_per_wedge = 3
     tets_per_hex = 5

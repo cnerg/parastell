@@ -265,19 +265,18 @@ class Stellarator(object):
                 mesh_filename=mesh_filename, export_dir=export_dir
             )
 
-    def construct_source_mesh(self, mesh_size, toroidal_extent, **kwargs):
+    def construct_source_mesh(
+        self, cfs_grid, poloidal_grid, toroidal_grid, **kwargs
+    ):
         """Constructs SourceMesh class object.
 
         Arguments:
-            mesh_size (tuple of int): number of grid points along each axis of
-                flux-coordinate space, in the order (num_s, num_theta, num_phi).
-                'num_s' is the number of closed flux surfaces for vertex
-                locations in each toroidal plane. 'num_theta' is the number of
-                poloidal angles for vertex locations in each toroidal plane.
-                'num_phi' is the number of toroidal angles for planes of
-                vertices.
-            toroidal_extent (float) : extent of source mesh in toroidal
-                direction [deg].
+            cfs_grid (iterable of float): mesh grid points along closed flux
+                surface (CFS) dimension of flux space.
+            poloidal_grid (iterable of float): mesh grid points along poloidal
+                angle dimension of flux space [deg].
+            toroidal_grid (iterable of float): mesh grid points along toroidal
+                angle dimension of flux space [deg].
 
         Optional attributes:
             scale (float): a scaling factor between the units of VMEC and [cm]
@@ -292,8 +291,9 @@ class Stellarator(object):
         """
         self.source_mesh = sm.SourceMesh(
             self._vmec_obj,
-            mesh_size,
-            toroidal_extent,
+            cfs_grid,
+            poloidal_grid,
+            toroidal_grid,
             logger=self._logger,
             **kwargs,
         )
@@ -646,7 +646,16 @@ def parastell():
 
     if args.source:
         source_mesh = all_data["source_mesh"]
-        stellarator.construct_source_mesh(**source_mesh)
+
+        mesh_size = source_mesh["mesh_size"]
+        toroidal_extent = source_mesh["toroidal_extent"]
+        cfs_grid = np.linspace(0.0, 1.0, mesh_size[0])
+        poloidal_grid = np.linspace(0.0, 360.0, num=mesh_size[1])
+        toroidal_grid = np.linspace(0.0, toroidal_extent, num=mesh_size[2])
+
+        stellarator.construct_source_mesh(
+            cfs_grid, poloidal_grid, toroidal_grid, **source_mesh
+        )
         stellarator.export_source_mesh(
             export_dir=args.export_dir,
             **(filter_kwargs(source_mesh, sm.export_allowed_kwargs)),
@@ -679,7 +688,7 @@ def parastell():
         nwl_required_keys = ["toroidal_angles", "poloidal_angles", "wall_s"]
 
         nwl_build = {}
-        for key in nwl_keys:
+        for key in nwl_required_keys:
             nwl_build[key] = invessel_build[key]
         nwl_build["radial_build"] = {}
 
