@@ -231,6 +231,7 @@ class InVesselBuild(object):
         build by cutting the interior surface solid from the outer surface
         solid for a given component.
         """
+        self.cubit_volumes = False
         self._logger.info(
             "Constructing CadQuery objects for in-vessel components..."
         )
@@ -275,23 +276,46 @@ class InVesselBuild(object):
         overlaps between magnet volumes and in-vessel components will not be
         merged in this workflow.
         """
-        # Tracks the surface id of the outer surface of the previous layer
-        prev_outer_surface_id = None
-
-        for data in self.radial_build.radial_build.values():
-
-            inner_surface_id, outer_surface_id = orient_spline_surfaces(
-                data["vol_id"]
-            )
-
-            # Conditionally skip merging (first iteration only)
-            if prev_outer_surface_id is None:
-                prev_outer_surface_id = outer_surface_id
-            else:
+        if self.cubit_volumes:
+            layers = list(self.radial_build.radial_build.values())
+            for layer, next_layer in zip(
+                reversed(layers[0:-1]), reversed(layers[1:])
+            ):
+                print(layer)
                 cubit.cmd(
-                    f"merge surface {inner_surface_id} {prev_outer_surface_id}"
+                    f"imprint volume {layer['vol_id']} {next_layer['vol_id']}"
                 )
-                prev_outer_surface_id = outer_surface_id
+                cubit.cmd(
+                    f"merge volume {layer['vol_id']} {next_layer['vol_id']}"
+                )
+        else:
+            # Tracks the surface id of the outer surface of the previous layer
+            prev_outer_surface_id = None
+
+            for data in self.radial_build.radial_build.values():
+
+                inner_surface_id, outer_surface_id = orient_spline_surfaces(
+                    data["vol_id"]
+                )
+
+                # Conditionally skip merging (first iteration only)
+                if prev_outer_surface_id is None:
+                    prev_outer_surface_id = outer_surface_id
+                else:
+                    cubit.cmd(
+                        f"merge surface {inner_surface_id} {prev_outer_surface_id}"
+                    )
+                    prev_outer_surface_id = outer_surface_id
+
+    def import_geom_cubit(self):
+        if self.cubit_volumes:
+            self.import_cub5_cubit()
+        else:
+            self.import_step_cubit()
+
+    def import_cub5_cubit(self):
+        """Import cub5 files from in-vessel build into Coreform Cubit"""
+        cubit_io.import_cub5_cubit("invessel_build.cub5", self.export_dir)
 
     def import_step_cubit(self):
         """Imports STEP files from in-vessel build into Coreform Cubit."""
@@ -315,6 +339,18 @@ class InVesselBuild(object):
                 ".step"
             )
             cq.exporters.export(component, str(export_path))
+
+    def save_cub5(self, filename="invessel_build.cub5", export_dir=""):
+        """Save current state of cubit model.
+
+        Arguments:
+            filename (str): name to save file as.
+            export_dir (str): directory in which to save the cub5 file.
+        """
+        self.export_dir = export_dir
+        cubit.cmd(
+            f'save cub5 "{Path(self.export_dir) / Path(filename).with_suffix(".cub5")}" overwrite'
+        )
 
     def export_cad_to_dagmc(self, dagmc_filename="dagmc", export_dir=""):
         """Exports DAGMC neutronics H5M file of ParaStell in-vessel components
@@ -345,6 +381,29 @@ class InVesselBuild(object):
         )
 
         model.export_dagmc_h5m_file(filename=str(export_path))
+
+    def build_cubit_volumes(self):
+        self.cubit_volumes = True
+        cubit_io.init_cubit()
+        self._logger.info("Creating faceted volumes in Coreform Cubit...")
+        for surface_name, surface in self.Surfaces.items():
+            surface.build_cubit_vertices_from_loci()
+            surface.build_cubit_surface()
+            # TODO handle when full device is specified, rather than one period
+            surface.close_cubit_surface_ends()
+            surface.build_cubit_volume()
+            self.radial_build.radial_build[surface_name][
+                "vol_id"
+            ] = surface.volume_id
+
+        layers = list(self.radial_build.radial_build.values())
+        for layer, next_layer in zip(
+            reversed(layers[0:-1]), reversed(layers[1:])
+        ):
+            cubit.cmd(
+                "remove overlap volume "
+                f"{layer['vol_id']} {next_layer['vol_id']} modify larger"
+            )
 
 
 class Surface(object):
@@ -413,6 +472,58 @@ class Surface(object):
     def get_loci(self):
         """Returns the set of point-loci defining the ribs in the surface."""
         return np.array([rib.rib_loci for rib in self.Ribs])
+
+    def build_cubit_vertices_from_loci(self):
+        vertex_ids = []
+        for loop in self.get_loci():
+            loop_vert_ids = []
+            for point in loop:
+                cubit.cmd(f"create vertex {point[0]} {point[1]} {point[2]}")
+                vertex_id = cubit.get_last_id("vertex")
+                loop_vert_ids.append(vertex_id)
+            vertex_ids.append(loop_vert_ids)
+        self.vertex_ids = np.array(vertex_ids)
+
+    def build_cubit_surface(self):
+        self.surface_ids = []
+        for loop_index, loop in enumerate(self.vertex_ids[0:-1, :]):
+            for point_index, _ in enumerate(loop[0:-1]):
+                ul = self.vertex_ids[loop_index, point_index]
+                ll = self.vertex_ids[loop_index + 1, point_index]
+                ur = self.vertex_ids[loop_index, point_index + 1]
+                lr = self.vertex_ids[loop_index + 1, point_index + 1]
+                cubit.cmd(f"create surface vertex {ul} {ll} {ur}")
+                self.surface_ids.append(cubit.get_last_id("surface"))
+                cubit.cmd(f"create surface vertex {lr} {ll} {ur}")
+                self.surface_ids.append(cubit.get_last_id("surface"))
+        surface_id_str = " ".join(
+            [str(surf_id) for surf_id in self.surface_ids]
+        )
+        cubit.cmd(f"unite surface {surface_id_str}")
+        self.surface_ids = [cubit.get_last_id("surface")]
+
+    def close_cubit_surface_ends(self):
+        start_cap_ids = " ".join(
+            [str(vertex) for vertex in self.vertex_ids[0][0:-1]]
+        )
+        end_cap_ids = " ".join(
+            [str(vertex) for vertex in self.vertex_ids[-1][0:-1]]
+        )
+        cubit.cmd(f"create surface vertex {start_cap_ids}")
+        self.surface_ids.append(cubit.get_last_id("surface"))
+        cubit.cmd(f"create surface vertex {end_cap_ids}")
+        self.surface_ids.append(cubit.get_last_id("surface"))
+
+    def build_cubit_volume(self):
+        surface_id_str = " ".join(
+            [str(surf_id) for surf_id in self.surface_ids]
+        )
+        cubit.cmd(f"create volume surface {surface_id_str}")
+        # When creating a surface, it actually makes a weird volume, so when
+        # combining surfaces into a volume, naturally it leaves gaps in the
+        # id space. Compressing here gives consecutively id'ed volumes
+        cubit.cmd("compress")
+        self.volume_id = cubit.get_last_id("volume")
 
 
 class Rib(object):
